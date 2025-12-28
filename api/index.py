@@ -3,8 +3,12 @@ from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
 
-app = Flask(__name__, template_folder='../templates') # Point to templates in root
+# GET ABSOLUTE PATH TO TEMPLATES
+# This calculates the path /var/task/templates based on the current file location
+template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'templates'))
 
+# Initialize Flask with the absolute path
+app = Flask(__name__, template_folder=template_dir)
 # Security: Use Environment Variable or fallback for dev
 app.secret_key = os.environ.get('SECRET_KEY', 'default_dev_key')
 # --- api/index.py (Updated DB Section) ---
