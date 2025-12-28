@@ -4,52 +4,41 @@
 import socket
 import os
 
-# This 'monkey patch' filters out IPv6 addresses so Flask only sees IPv4
-# It fixes the "Cannot assign requested address" error on Vercel
+# This patch forces Vercel to use IPv4
 valid_families = (socket.AF_INET,)
 original_getaddrinfo = socket.getaddrinfo
 
 def new_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    # Force the query to use IPv4 (AF_INET)
-    return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+    try:
+        # Force the query to use IPv4 (AF_INET)
+        return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+    except socket.gaierror:
+        # Fallback if IPv4 fails (rare, but safety net)
+        return original_getaddrinfo(host, port, family, type, proto, flags)
 
 socket.getaddrinfo = new_getaddrinfo
 # ----------------------------------------
 
-# 2. Regular imports start here
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.pool import NullPool
 
-# ... (Rest of your code remains exactly the same) ...
-
-
-# GET ABSOLUTE PATH TO TEMPLATES
-# This calculates the path /var/task/templates based on the current file location
+# Get absolute path to templates
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'templates'))
 
-# Initialize Flask with the absolute path
 app = Flask(__name__, template_folder=template_dir)
-# Security: Use Environment Variable or fallback for dev
 app.secret_key = os.environ.get('SECRET_KEY', 'default_dev_key')
-# --- api/index.py (Updated DB Section) ---
 
-# ... imports ...
-
-app = Flask(__name__, template_folder='../templates')
-
-# Security
-app.secret_key = os.environ.get('SECRET_KEY', 'default_dev_key')
-# --- SUPABASE DATABASE CONFIGURATION ---
+# --- DATABASE CONFIG ---
 db_url = os.environ.get('DATABASE_URL')
 
 if db_url:
-    # Fix 1: Ensure correct protocol
+    # 1. Ensure PostgreSQL protocol
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
-        
-    # Fix 2: Ensure SSL is required
+    
+    # 2. Ensure SSL
     if "sslmode" not in db_url:
         separator = "&" if "?" in db_url else "?"
         db_url += f"{separator}sslmode=require"
@@ -57,20 +46,19 @@ if db_url:
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Fix 3: Disable SQLAlchemy Pooling (Let Supabase handle it)
+# --- CRITICAL SETTINGS FOR SUPABASE POOLER (PORT 6543) ---
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    "poolclass": NullPool,       # <--- Critical for Port 6543
-    "pool_pre_ping": True,       # Checks connection health
+    "poolclass": NullPool,      # 1. Don't pool (Supabase does it)
+    "pool_pre_ping": True,      # 2. Health check
     "connect_args": {
-        "connect_timeout": 10    # Fail fast if connection hangs
+        "connect_timeout": 10,
+        "prepare_threshold": None  # 3. DISABLE prepared statements (Required for Port 6543)
     }
 }
 
 db = SQLAlchemy(app)
 
-# ... (Rest of the code: Models, Routes, etc. remain exactly the same) ...
-
-# --- Models ---
+# --- MODELS ---
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
@@ -100,7 +88,7 @@ class Comparison(db.Model):
     city_tr = db.relationship('City', foreign_keys=[city_tr_id])
     __table_args__ = (db.UniqueConstraint('user_id', 'city_us_id', 'city_tr_id', name='unique_user_city_pair'),)
 
-# --- Routes ---
+# --- ROUTES ---
 
 @app.route('/', methods=['GET', 'POST'])
 def login():
@@ -112,7 +100,6 @@ def login():
         
         user = User.query.filter_by(username=username).first()
         if not user:
-            # Note: request.remote_addr might be a proxy IP on Vercel
             user = User(username=username, ip_address=request.headers.get('x-forwarded-for', request.remote_addr))
             db.session.add(user)
             db.session.commit()
@@ -128,9 +115,7 @@ def login():
 
 @app.route('/dashboard', methods=['GET', 'POST'])
 def dashboard():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-    
+    if 'user_id' not in session: return redirect(url_for('login'))
     user = User.query.get(session['user_id'])
     
     if request.method == 'POST':
@@ -173,7 +158,6 @@ def dashboard():
     us_cities = City.query.filter_by(country='USA').order_by(City.name).all()
     tr_cities = City.query.filter_by(country='Turkiye').order_by(City.name).all()
     my_comparisons = Comparison.query.filter_by(user_id=user.id).order_by(Comparison.created_at.desc()).all()
-    
     return render_template('dashboard.html', user=user, us_cities=us_cities, tr_cities=tr_cities, comparisons=my_comparisons, count=len(my_comparisons))
 
 @app.route('/list')
@@ -201,16 +185,13 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# --- DB Setup Route (Run this once) ---
 @app.route('/setup_db')
 def setup_db():
     try:
         db.create_all()
         if not City.query.first():
-            # (Truncated list for brevity, full list acts the same)
             us_cities = ["New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia", "San Antonio", "San Diego", "Dallas", "San Jose", "Austin", "Jacksonville", "Fort Worth", "Columbus", "Charlotte", "San Francisco", "Indianapolis", "Seattle", "Denver", "Washington", "Boston", "El Paso", "Nashville", "Detroit", "Oklahoma City", "Portland", "Las Vegas", "Memphis", "Louisville", "Baltimore", "Milwaukee", "Albuquerque", "Tucson", "Fresno", "Mesa", "Sacramento", "Atlanta", "Kansas City", "Colorado Springs", "Miami", "Raleigh", "Omaha", "Long Beach", "Virginia Beach", "Oakland", "Minneapolis", "Tulsa", "Arlington", "Tampa", "New Orleans"]
             tr_cities = ["Istanbul", "Ankara", "Izmir", "Bursa", "Adana", "Gaziantep", "Konya", "Antalya", "Kayseri", "Mersin", "Eskisehir", "Diyarbakir", "Samsun", "Denizli", "Sanliurfa", "Malatya", "Kahramanmaras", "Erzurum", "Van", "Batman", "Elazig", "Izmit", "Manisa", "Sivas", "Gebze", "Balikesir", "Tarsus", "Trabzon", "Kutahya", "Corum", "Isparta", "Osmaniye", "Kirikkale", "Antakya", "Aydin", "Iskenderun", "Usak", "Aksaray", "Afyon", "Edirne"]
-            
             for name in us_cities: db.session.add(City(name=name, country='USA', population=100000))
             for name in tr_cities: db.session.add(City(name=name, country='Turkiye', population=100000))
             db.session.commit()
