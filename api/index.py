@@ -1,58 +1,60 @@
-# --- api/index.py ---
-
-# 1. FORCE IPv4 (Must be at the very top)
-import socket
 import os
-
-# This patch forces Vercel to use IPv4
-valid_families = (socket.AF_INET,)
-original_getaddrinfo = socket.getaddrinfo
-
-def new_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    try:
-        # Force the query to use IPv4 (AF_INET)
-        return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-    except socket.gaierror:
-        # Fallback if IPv4 fails (rare, but safety net)
-        return original_getaddrinfo(host, port, family, type, proto, flags)
-
-socket.getaddrinfo = new_getaddrinfo
-# ----------------------------------------
-
+import socket
 from datetime import datetime
+from urllib.parse import urlparse, urlunparse
+
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.pool import NullPool
 
-# Get absolute path to templates
+# 1. SETUP PATHS
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'templates'))
-
 app = Flask(__name__, template_folder=template_dir)
 app.secret_key = os.environ.get('SECRET_KEY', 'default_dev_key')
 
-# --- DATABASE CONFIG ---
+# 2. RESOLVE DATABASE URL TO IPv4 MANUALLY
 db_url = os.environ.get('DATABASE_URL')
 
 if db_url:
-    # 1. Ensure PostgreSQL protocol
-    if db_url.startswith("postgres://"):
-        db_url = db_url.replace("postgres://", "postgresql://", 1)
-    
-    # 2. Ensure SSL
-    if "sslmode" not in db_url:
-        separator = "&" if "?" in db_url else "?"
-        db_url += f"{separator}sslmode=require"
+    try:
+        # Parse the URL
+        parsed = urlparse(db_url)
+        
+        # Extract hostname (e.g., db.xyz.supabase.co)
+        hostname = parsed.hostname
+        
+        # Force resolve to IPv4
+        ipv4_address = socket.gethostbyname(hostname)
+        
+        # Reconstruct URL with the raw IP address
+        # This prevents the driver from finding the IPv6 address
+        new_netloc = parsed.netloc.replace(hostname, ipv4_address)
+        parsed = parsed._replace(netloc=new_netloc)
+        
+        # Ensure correct scheme (postgresql://)
+        if parsed.scheme == 'postgres':
+            parsed = parsed._replace(scheme='postgresql')
+            
+        db_url = urlunparse(parsed)
+        
+        # Ensure SSL is still on
+        if "sslmode" not in db_url:
+            separator = "&" if "?" in db_url else "?"
+            db_url += f"{separator}sslmode=require"
+            
+    except Exception as e:
+        print(f"Error resolving Database Host: {e}")
 
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# --- CRITICAL SETTINGS FOR SUPABASE POOLER (PORT 6543) ---
+# 3. CONFIGURE FOR SUPABASE POOLER (Port 6543)
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    "poolclass": NullPool,      # 1. Don't pool (Supabase does it)
-    "pool_pre_ping": True,      # 2. Health check
+    "poolclass": NullPool,       # Disable SQLAlchemy pooling
+    "pool_pre_ping": True,       # Check connection health
     "connect_args": {
         "connect_timeout": 10,
-        "prepare_threshold": None  # 3. DISABLE prepared statements (Required for Port 6543)
+        "prepare_threshold": None  # Disable prepared statements (Required for Port 6543)
     }
 }
 
