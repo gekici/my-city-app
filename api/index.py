@@ -1,9 +1,29 @@
+# --- api/index.py ---
+
+# 1. FORCE IPv4 (Must be at the very top)
+import socket
 import os
+
+# This 'monkey patch' filters out IPv6 addresses so Flask only sees IPv4
+# It fixes the "Cannot assign requested address" error on Vercel
+valid_families = (socket.AF_INET,)
+original_getaddrinfo = socket.getaddrinfo
+
+def new_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    # Force the query to use IPv4 (AF_INET)
+    return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+socket.getaddrinfo = new_getaddrinfo
+# ----------------------------------------
+
+# 2. Regular imports start here
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.pool import NullPool
 
-from sqlalchemy.pool import NullPool  # <--- Add this import
+# ... (Rest of your code remains exactly the same) ...
+
 
 # GET ABSOLUTE PATH TO TEMPLATES
 # This calculates the path /var/task/templates based on the current file location
