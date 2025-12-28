@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Global Comparisons</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+<nav class="navbar navbar-dark bg-dark mb-4">
+    <div class="container">
+        <a href="{{ url_for('dashboard') }}" class="navbar-brand">&larr; Back to Dashboard</a>
+    </div>
+</nav>
+
+<div class="container">
+    <h2 class="mb-4">Global City Matches</h2>
+    
+    <form method="GET" class="row mb-4">
+        <div class="col-md-4">
+            <select name="filter_us" class="form-select">
+                <option value="">All US Cities</option>
+                {% for city in us_cities %}
+                <option value="{{ city.id }}" {% if request.args.get('filter_us')|int == city.id %}selected{% endif %}>{{ city.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-4">
+            <select name="filter_tr" class="form-select">
+                <option value="">All TR Cities</option>
+                {% for city in tr_cities %}
+                <option value="{{ city.id }}" {% if request.args.get('filter_tr')|int == city.id %}selected{% endif %}>{{ city.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-primary w-100">Filter</button>
+        </div>
+        <div class="col-md-2">
+            <a href="{{ url_for('list_view') }}" class="btn btn-outline-secondary w-100">Reset</a>
+        </div>
+    </form>
+
+    <div class="row">
+        {% for item in comparisons %}
+        {% set comp = item[0] %}
+        {% set author = item[1] %}
+        <div class="col-12 mb-3">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between">
+                    <span>Contributor: <strong>{{ author }}</strong></span>
+                    <span class="text-muted text-small">{{ comp.created_at.strftime('%Y-%m-%d') }}</span>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-md-5 border-end">
+                            <h5 class="text-primary">{{ comp.city_us.name }}</h5>
+                            <small class="text-muted">USA</small>
+                        </div>
+                        
+                        <div class="col-md-2 d-flex align-items-center justify-content-center">
+                            <span class="badge bg-secondary">Similar Because</span>
+                        </div>
+
+                        <div class="col-md-5 border-start">
+                            <h5 class="text-danger">{{ comp.city_tr.name }}</h5>
+                            <small class="text-muted">Turkiye</small>
+                        </div>
+                    </div>
+                    <hr>
+                    <div class="d-flex justify-content-between px-5">
+                        <span class="badge bg-light text-dark border">{{ comp.sim1 }}</span>
+                        <span class="badge bg-light text-dark border">{{ comp.sim2 }}</span>
+                        <span class="badge bg-light text-dark border">{{ comp.sim3 }}</span>
+                        <span class="badge bg-light text-dark border">{{ comp.sim4 }}</span>
+                        <span class="badge bg-light text-dark border">{{ comp.sim5 }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% else %}
+            <div class="alert alert-warning">No comparisons found matching your filters.</div>
+        {% endfor %}
+    </div>
+</div>
+</body>
+</html>
