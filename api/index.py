@@ -7,18 +7,44 @@ app = Flask(__name__, template_folder='../templates') # Point to templates in ro
 
 # Security: Use Environment Variable or fallback for dev
 app.secret_key = os.environ.get('SECRET_KEY', 'default_dev_key')
+# --- api/index.py (Updated DB Section) ---
 
-# Database Configuration
-# Vercel Storage provides 'POSTGRES_URL', 'POSTGRES_PRISMA_URL', etc.
-# We modify the URL to ensure it uses the correct driver (postgresql://)
-db_url = os.environ.get('POSTGRES_URL')
-if db_url and db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
+# ... imports ...
 
-app.config['SQLALCHEMY_DATABASE_URI'] = db_url or 'sqlite:///local.db'
+app = Flask(__name__, template_folder='../templates')
+
+# Security
+app.secret_key = os.environ.get('SECRET_KEY', 'default_dev_key')
+
+# --- SUPABASE DATABASE CONFIGURATION ---
+db_url = os.environ.get('DATABASE_URL')
+
+if db_url:
+    # Fix 1: SQLAlchemy requires 'postgresql://', but Supabase copies as 'postgres://'
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+        
+    # Fix 2: Supabase requires SSL. 
+    # If the URL doesn't have sslmode, we append it to ensure a secure connection.
+    if "sslmode" not in db_url:
+        if "?" in db_url:
+            db_url += "&sslmode=require"
+        else:
+            db_url += "?sslmode=require"
+
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Fix 3: Engine Options for stability
+# 'pool_pre_ping': Checks if the DB connection is alive before using it (prevents "server closed the connection" errors)
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+}
+
 db = SQLAlchemy(app)
+
+# ... (Rest of the code: Models, Routes, etc. remain exactly the same) ...
 
 # --- Models ---
 class User(db.Model):
