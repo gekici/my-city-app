@@ -3,6 +3,8 @@ from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
 
+from sqlalchemy.pool import NullPool  # <--- Add this import
+
 # GET ABSOLUTE PATH TO TEMPLATES
 # This calculates the path /var/task/templates based on the current file location
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'templates'))
@@ -19,31 +21,29 @@ app = Flask(__name__, template_folder='../templates')
 
 # Security
 app.secret_key = os.environ.get('SECRET_KEY', 'default_dev_key')
-
 # --- SUPABASE DATABASE CONFIGURATION ---
 db_url = os.environ.get('DATABASE_URL')
 
 if db_url:
-    # Fix 1: SQLAlchemy requires 'postgresql://', but Supabase copies as 'postgres://'
+    # Fix 1: Ensure correct protocol
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
         
-    # Fix 2: Supabase requires SSL. 
-    # If the URL doesn't have sslmode, we append it to ensure a secure connection.
+    # Fix 2: Ensure SSL is required
     if "sslmode" not in db_url:
-        if "?" in db_url:
-            db_url += "&sslmode=require"
-        else:
-            db_url += "?sslmode=require"
+        separator = "&" if "?" in db_url else "?"
+        db_url += f"{separator}sslmode=require"
 
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Fix 3: Engine Options for stability
-# 'pool_pre_ping': Checks if the DB connection is alive before using it (prevents "server closed the connection" errors)
+# Fix 3: Disable SQLAlchemy Pooling (Let Supabase handle it)
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    "pool_pre_ping": True,
-    "pool_recycle": 300,
+    "poolclass": NullPool,       # <--- Critical for Port 6543
+    "pool_pre_ping": True,       # Checks connection health
+    "connect_args": {
+        "connect_timeout": 10    # Fail fast if connection hangs
+    }
 }
 
 db = SQLAlchemy(app)
