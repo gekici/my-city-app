@@ -12,7 +12,7 @@ template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'te
 app = Flask(__name__, template_folder=template_dir)
 app.secret_key = os.environ.get('SECRET_KEY', 'default_dev_key')
 
-# 2. ROBUST DATABASE CONNECTION LOGIC
+# 2. STRICT DATABASE CONNECTION LOGIC
 def get_safe_db_url():
     raw_url = os.environ.get('DATABASE_URL')
     if not raw_url:
@@ -21,35 +21,42 @@ def get_safe_db_url():
     try:
         # Parse the URL
         parsed = urlparse(raw_url)
-        
-        # 1. Fix Scheme (postgres -> postgresql)
-        scheme = parsed.scheme.replace('postgres', 'postgresql')
-        
-        # 2. Resolve Hostname to IPv4 explicitly
-        # This bypasses Vercel's broken IPv6 DNS by getting the raw IP (e.g., 123.45.67.89)
         hostname = parsed.hostname
         port = parsed.port or 5432
-        ipv4_address = socket.gethostbyname(hostname) # This function only returns IPv4
         
-        # 3. Reconstruct the netloc manually (user:pass@IP:port)
-        # We do this manually to avoid string replacement errors with special chars in passwords
+        # STRICTLY resolve to IPv4 (AF_INET)
+        # We use getaddrinfo to specifically ask for 'A' records (IPv4)
+        # This prevents getting an IPv6 address by mistake
+        try:
+            addr_info = socket.getaddrinfo(hostname, port, socket.AF_INET, socket.SOCK_STREAM)
+            # The result is a list of tuples. We take the IP address from the first one.
+            # Format: (family, type, proto, canonname, (address, port))
+            ipv4_address = addr_info[0][4][0]
+            print(f"Resolved {hostname} to IPv4: {ipv4_address}")
+        except socket.gaierror as e:
+            print(f"DNS Resolution Failed for {hostname}: {e}")
+            raise e
+
+        # Reconstruct the URL with the raw IPv4 address
+        # We manually rebuild the netloc to handle special chars in passwords safely
         user = parsed.username
         password = parsed.password
         new_netloc = f"{user}:{password}@{ipv4_address}:{port}"
         
-        # 4. Handle SSL
+        # Fix Scheme
+        scheme = parsed.scheme.replace('postgres', 'postgresql')
+        
+        # Ensure SSL
         query = parsed.query
         if "sslmode" not in query:
             query += "&sslmode=require" if query else "sslmode=require"
             
-        # 5. Build final URL
-        # We use the raw IPv4 address so psycopg2 NEVER sees the hostname
         final_url = urlunparse((scheme, new_netloc, parsed.path, parsed.params, query, parsed.fragment))
         return final_url
         
     except Exception as e:
-        print(f"Error resolving DB URL: {e}")
-        # Fallback to original if resolution fails (unlikely)
+        # If this fails, we return the original URL but print the error to Vercel logs
+        print(f"CRITICAL ERROR in DB URL Resolution: {e}")
         return raw_url.replace('postgres://', 'postgresql://')
 
 # Apply the Safe URL
@@ -57,7 +64,6 @@ app.config['SQLALCHEMY_DATABASE_URI'] = get_safe_db_url()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # 3. CONFIGURE FOR SUPABASE POOLER
-# We disable prepared statements and pooling to play nice with Port 6543
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     "poolclass": NullPool,
     "pool_pre_ping": True,
@@ -111,11 +117,14 @@ def login():
         
         user = User.query.filter_by(username=username).first()
         if not user:
-            user = User(username=username, ip_address=request.headers.get('x-forwarded-for', request.remote_addr))
+            # Safe IP extraction for Vercel
+            user_ip = request.headers.get('x-forwarded-for', request.remote_addr)
+            user = User(username=username, ip_address=user_ip)
             db.session.add(user)
             db.session.commit()
         else:
-            user.ip_address = request.headers.get('x-forwarded-for', request.remote_addr)
+            user_ip = request.headers.get('x-forwarded-for', request.remote_addr)
+            user.ip_address = user_ip
             db.session.commit()
         
         session['user_id'] = user.id
